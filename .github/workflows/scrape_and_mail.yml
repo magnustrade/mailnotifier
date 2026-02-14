@@ -30,5 +30,6 @@ jobs:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           SCRAPE_URL: ${{ secrets.SCRAPE_URL }}
+          SCRAPE_CMI_URL: ${{ secrets.SCRAPE_CMI_URL }}
         run: |
           python main.py
