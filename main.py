@@ -1,6 +1,6 @@
 # author: @dipavcisi0007
 # source: https://x.com/dipAVCISI007/status/1894070221469577311
-# edited by: therkut 
+# edited by: therkut & Gemini
 # BIST Pay Endeksleri - Katılım Filtreli Agresif ve CMI Sinyal Taraması
 
 import os
@@ -19,24 +19,27 @@ def load_stock_list(url="https://raw.githubusercontent.com/therkut/bistLists/ref
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            print(f"Hata: Katılım listesi çekilemedi (HTTP {response.status_code})")
+            print(f"Uyarı: Katılım listesi çekilemedi (HTTP {response.status_code}). Tüm hisseler getirilecek.")
             return []
 
         from io import StringIO
         df = pd.read_csv(StringIO(response.text))
         
         if 'stock' not in df.columns:
-            print("Hata: CSV içinde 'stock' sütunu bulunamadı.")
+            print("Uyarı: CSV içinde 'stock' sütunu bulunamadı.")
             return []
             
         stock_list = df['stock'].dropna().astype(str).str.strip().tolist()
         return stock_list
     except Exception as e:
-        print(f"Hata: Hisse listesi yüklenirken istisna oluştu: {e}")
+        print(f"Uyarı: Hisse listesi yüklenirken hata oluştu: {e}")
         return []
 
 def scrape_data(url):
-    """Web sitesinden sağlanan yeni HTML tablo yapısına göre verileri çeker."""
+    """Web sitesinden sağlanan HTML tablo yapısına göre verileri çeker."""
+    if not url:
+        return []
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -63,10 +66,10 @@ def scrape_data(url):
     business_days_count = 0
     days_back = 0
     while business_days_count < 3:
-        days_back += 1
         current_date = today - timedelta(days=days_back)
         if current_date.weekday() < 5:
             business_days_count += 1
+        days_back += 1
     
     three_business_days_ago = today - timedelta(days=days_back)
     three_business_days_ago = three_business_days_ago.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -102,7 +105,7 @@ def scrape_data(url):
 def send_email(stock_signals, from_name, from_address, to_addresses, password, subject, report_title, smtp_server="smtp.gmail.com", smtp_port=465):
     """Verilen sinyalleri e-posta olarak gönderir."""
     if not stock_signals:
-        print(f"{report_title} için gönderilecek sinyal bulunamadı.")
+        print(f"{report_title} için kriterlere uygun sinyal bulunmadığından e-posta gönderilmedi.")
         return
 
     now = datetime.now()
@@ -174,42 +177,35 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
         print(f"{report_title} e-posta gönderim hatası: {e}")
 
 if __name__ == "__main__":
-    # Ortam Değişkenleri
-    EMAIL_USER = os.environ.get('EMAIL_USER')
-    EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
-    TO_EMAIL = os.environ.get('TO_EMAIL')
+    # Kritik degiskenleri aliyoruz
+    email_user = os.environ.get('EMAIL_USER')
+    email_pass = os.environ.get('EMAIL_PASSWORD')
+    to_email = os.environ.get('TO_EMAIL')
     
-    # URL Tanımlamaları
-    SCRAPE_AGRESIF_URL = os.environ.get('SCRAPE_URL')
-    SCRAPE_CMI_URL = os.environ.get('SCRAPE_CMI_URL')
+    # URL'leri aliyoruz
+    url_agresif = os.environ.get('SCRAPE_URL')
+    url_cmi = os.environ.get('SCRAPE_CMI_URL')
 
-    if not all([EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL, SCRAPE_AGRESIF_URL, SCRAPE_CMI_URL]):
-        print("Hata: Ortam değişkenleri (Email bilgileri veya URL'ler) eksik.")
+    # Temel kimlik dogrulama kontrolü
+    if not all([email_user, email_pass, to_email]):
+        print("Hata: EMAIL_USER, EMAIL_PASSWORD veya TO_EMAIL ortam degiskenleri eksik.")
     else:
-        to_email_list = [e.strip() for e in TO_EMAIL.split(',')]
+        to_email_list = [e.strip() for e in to_email.split(',')]
         
-        # 1. Agresif Hisse Taraması
-        print("Agresif sinyaller taranıyor...")
-        agresif_signals = scrape_data(SCRAPE_AGRESIF_URL)
-        send_email(
-            stock_signals=agresif_signals, 
-            from_name="therkut", 
-            from_address=EMAIL_USER, 
-            to_addresses=to_email_list, 
-            password=EMAIL_PASSWORD,
-            subject="📊 Agresif Hisse Sinyal Raporu",
-            report_title="Agresif Hisse Sinyalleri"
-        )
-        
-        # 2. CMI Hisse Taraması
-        print("CMI sinyalleri taranıyor...")
-        cmi_signals = scrape_data(SCRAPE_CMI_URL)
-        send_email(
-            stock_signals=cmi_signals, 
-            from_name="therkut", 
-            from_address=EMAIL_USER, 
-            to_addresses=to_email_list, 
-            password=EMAIL_PASSWORD,
-            subject="📊 CMI Hisse Sinyal Raporu",
-            report_title="CMI Hisse Sinyalleri"
-        )
+        # Agresif Sinyal Islemi
+        if url_agresif:
+            print("Agresif sinyaller taranıyor...")
+            res_agresif = scrape_data(url_agresif)
+            send_email(res_agresif, "therkut", email_user, to_email_list, email_pass, 
+                       "📊 Agresif Hisse Sinyal Raporu", "Agresif Hisse Sinyalleri")
+        else:
+            print("Uyarı: SCRAPE_URL tanımlanmadığı için Agresif tarama atlandı.")
+
+        # CMI Sinyal Islemi
+        if url_cmi:
+            print("CMI sinyalleri taranıyor...")
+            res_cmi = scrape_data(url_cmi)
+            send_email(res_cmi, "therkut", email_user, to_email_list, email_pass, 
+                       "📊 CMI Hisse Sinyal Raporu", "CMI Hisse Sinyalleri")
+        else:
+            print("Uyarı: SCRAPE_CMI_URL tanımlanmadığı için CMI tarama atlandı.")
