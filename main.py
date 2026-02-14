@@ -223,7 +223,7 @@ if __name__ == "__main__":
         if url_agresif:
             print("Agresif sinyaller taranıyor...")
             res_agresif = scrape_data(url_agresif, is_cmi_mode=False)
-            send_email(res_agresif, "therkut", email_user, to_email_list, email_pass, 
+            send_email(res_agresif, "Magnus Trade", email_user, to_email_list, email_pass, 
                        "📊 Agresif Hisse Sinyal Raporu", "Agresif Hisse Sinyalleri", is_cmi_mode=False)
 
         # 2. CMI Hisse Taraması
@@ -232,3 +232,4 @@ if __name__ == "__main__":
             res_cmi = scrape_data(url_cmi, is_cmi_mode=True)
             send_email(res_cmi, "therkut", email_user, to_email_list, email_pass, 
                        "📊 CMI/CMF Hisse Sinyal Raporu", "CMI/CMF Hisse Sinyalleri", is_cmi_mode=True)
+
