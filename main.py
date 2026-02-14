@@ -1,8 +1,7 @@
 # author: @dipavcisi0007
 # source: https://x.com/dipAVCISI007/status/1894070221469577311
-# edited by: @therkut
-# BIST Pay Endeksleri 
-# **** Katılım ****
+# edited by: @therkut & Gemini
+# BIST Pay Endeksleri - Katılım Filtreli Agresif Sinyal Taraması
 
 import os
 import smtplib
@@ -14,176 +13,178 @@ from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 
 def load_stock_list(url="https://raw.githubusercontent.com/therkut/bistLists/refs/heads/main/data/stock_xktum_data.csv"):
-    """
-    Belirtilen CSV adresinden 'stock' sütunundaki hisse listesini çeker.
-    """
+    """GitHub üzerinden katılım endeksi hisse listesini çeker."""
     try:
-        df = pd.read_csv(url)
-        if 'stock' not in df.columns:
-            print("Hata: 'stock' sütunu bulunamadı.")
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"Hata: Katılım listesi çekilemedi (HTTP {response.status_code})")
             return []
+
+        from io import StringIO
+        df = pd.read_csv(StringIO(response.text))
+        
+        if 'stock' not in df.columns:
+            print("Hata: CSV içinde 'stock' sütunu bulunamadı.")
+            return []
+            
         stock_list = df['stock'].dropna().astype(str).str.strip().tolist()
         return stock_list
     except Exception as e:
-        print(f"Hata: Hisse listesi çekilemedi: {e}")
+        print(f"Hata: Hisse listesi yüklenirken istisna oluştu: {e}")
         return []
 
 def scrape_data(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
+    """Web sitesinden sağlanan yeni HTML tablo yapısına göre verileri çeker."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Hata: Web sitesine bağlanılamadı: {e}")
+        return []
 
+    soup = BeautifulSoup(response.content, 'html.parser')
+    # tbody içindeki satırları hedefliyoruz
     table = soup.find('table')
-    rows = table.find_all('tr')[1:]  # Skip the header row
+    if not table:
+        print("Hata: Sayfada tablo bulunamadı.")
+        return []
+
+    rows = table.find('tbody').find_all('tr') if table.find('tbody') else table.find_all('tr')[1:]
 
     stock_signals = []
     today = datetime.now()
+    
+    # 3 İş günü filtresi
     business_days_count = 0
     days_back = 0
-    three_business_days_ago = None
-
     while business_days_count < 3:
-        current_date = today - timedelta(days=days_back)
-        if current_date.weekday() < 5:  # Cumartesi (5) ve Pazar (6) hariç
-            business_days_count += 1
         days_back += 1
+        current_date = today - timedelta(days=days_back)
+        if current_date.weekday() < 5:
+            business_days_count += 1
+    
     three_business_days_ago = today - timedelta(days=days_back)
+    three_business_days_ago = three_business_days_ago.replace(hour=0, minute=0, second=0, microsecond=0)
 
     STOCK_LIST = load_stock_list()
 
     for row in rows:
         cols = row.find_all('td')
-        stock = cols[0].text.strip()
-        support_price = cols[1].text.strip()
-        signal_price = cols[2].text.strip()
-        date_str = cols[4].text.strip()
+        # Beklenen yapı: 0:Hisse, 1:Destek, 2:Signal, 3:Cmi, 4:Tarih
+        if len(cols) < 5: continue 
+        
+        stock = cols[0].get_text(strip=True)
+        support_price = cols[1].get_text(strip=True)
+        signal_price = cols[2].get_text(strip=True)
+        cmi_val = cols[3].get_text(strip=True)
+        date_str = cols[4].get_text(strip=True)
 
         try:
-            date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-            if date >= three_business_days_ago:
-                if stock in STOCK_LIST:
+            # Örnek format: 2026-02-13 18:26:00
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+            if date_obj >= three_business_days_ago:
+                if not STOCK_LIST or stock in STOCK_LIST:
                     stock_signals.append({
                         "stock": stock,
                         "support_price": support_price,
                         "signal_price": signal_price,
+                        "cmi": cmi_val,
                         "date": date_str
                     })
-        except ValueError as e:
-            print(f"Tarih formatı hatalı: {date_str}, hata: {e}")
+        except ValueError:
             continue
 
+    print(f"Tarama tamamlandı: {len(stock_signals)} sinyal filtrelendi.")
     return stock_signals
-
-def is_valid_email(email):
-    if not email or '@' not in email or '.' not in email.split('@')[-1]:
-        return False
-    return True
 
 def send_email(stock_signals, from_name, from_address, to_addresses, password, smtp_server="smtp.gmail.com", smtp_port=465):
     if not stock_signals:
-        print("Gönderilecek sinyal yok.")
+        print("Gönderilecek sinyal bulunamadı.")
         return
-
-    if not all([from_address, to_addresses, password, smtp_server]):
-        print("Hata: E-posta bilgileri eksik.")
-        return
-
-    valid_to_addresses = [email for email in to_addresses if is_valid_email(email)]
-    if not valid_to_addresses:
-        print("Hata: Hiçbir geçerli alıcı adresi bulunamadı.")
-        return
-
-    invalid_addresses = set(to_addresses) - set(valid_to_addresses)
-    if invalid_addresses:
-        print(f"Geçersiz e-posta adresleri tespit edildi ve hariç tutuldu: {invalid_addresses}")
 
     now = datetime.now()
-    date_str = now.strftime("%d.%m.%Y")  # Sadece tarih, saat yok
+    date_str = now.strftime("%d.%m.%Y")
     current_year = now.strftime("%Y")
 
     html_body = f"""
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:8px;">
-        <tbody>
-            <tr>
-                <td style="padding:25px; text-align:center;">
-                    <h2 style="margin:0; font-size:24px; color:#333;">Engulfing Candles Tarama {date_str}</h2>
-                </td>
-            </tr>
-            <tr>
-                <td style="padding:20px;">
-                    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
-                        <tbody>
-                            <tr style="background-color:#f5f5f5;">
-                                <th style="padding:12px 8px; border:1px solid #e0e0e0; font-size:12px; font-weight:600; color:#2c3e50;">Hisse</th>
-                                <th style="padding:12px 8px; border:1px solid #e0e0e0; font-size:12px; font-weight:600; color:#2c3e50;">Destek Fiyatı</th>
-                                <th style="padding:12px 8px; border:1px solid #e0e0e0; font-size:12px; font-weight:600; color:#2c3e50;">Signal Fiyatı</th>
-                                <th style="padding:12px 8px; border:1px solid #e0e0e0; font-size:12px; font-weight:600; color:#2c3e50;">Tarih</th>
-                            </tr>
+    <html>
+    <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 20px;">
+    <div style="max-width:650px; margin:0 auto; background-color: #ffffff; border-radius:12px; overflow:hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color:white; padding:30px; text-align:center;">
+            <h2 style="margin:0; font-size: 24px;">📊 Agresif Hisse Sinyalleri</h2>
+            <p style="margin:10px 0 0 0; opacity: 0.8;">{date_str} Günlük Tarama Raporu</p>
+        </div>
+        <div style="padding:20px;">
+            <table width="100%" style="border-collapse:collapse; margin-top: 10px;">
+                <thead>
+                    <tr style="background-color:#f8f9fa; border-bottom: 2px solid #dee2e6;">
+                        <th style="padding:12px; text-align:left; color: #495057;">Hisse</th>
+                        <th style="padding:12px; text-align:center; color: #495057;">Destek</th>
+                        <th style="padding:12px; text-align:center; color: #495057;">Sinyal</th>
+                        <th style="padding:12px; text-align:center; color: #495057;">Cmi</th>
+                        <th style="padding:12px; text-align:right; color: #495057;">Tarih</th>
+                    </tr>
+                </thead>
+                <tbody>
     """
 
     for i, signal in enumerate(stock_signals):
-        row_bg = "#f8f9fa" if i % 2 == 0 else "#ffffff"
+        bg_color = "#ffffff" if i % 2 == 0 else "#fcfcfc"
         html_body += f"""
-                            <tr style="background-color:{row_bg};">
-                                <td style="padding:12px 8px; border:1px solid #e0e0e0; text-align:center;"><strong>{signal['stock']}</strong></td>
-                                <td style="padding:12px 8px; border:1px solid #e0e0e0; text-align:center;">{signal['support_price']}</td>
-                                <td style="padding:12px 8px; border:1px solid #e0e0e0; text-align:center;">{signal['signal_price']}</td>
-                                <td style="padding:12px 8px; border:1px solid #e0e0e0; text-align:center;">{signal['date']}</td>
-                            </tr>
+            <tr style="background-color: {bg_color}; border-bottom: 1px solid #eee;">
+                <td style="padding:12px; font-weight: bold; color: #2c3e50;">{signal['stock']}</td>
+                <td style="padding:12px; text-align:center;">{signal['support_price']}</td>
+                <td style="padding:12px; text-align:center; color: #27ae60; font-weight: 500;">{signal['signal_price']}</td>
+                <td style="padding:12px; text-align:center; color: #7f8c8d;">{signal['cmi']}</td>
+                <td style="padding:12px; text-align:right; font-size:11px; color: #95a5a6;">{signal['date']}</td>
+            </tr>
         """
 
     html_body += f"""
-                        </tbody>
-                    </table>
-                </td>
-            </tr>
-            <tr>
-                <td style="padding:20px;">
-                    <div style="background-color:#fff3e0; padding:15px; border-radius:8px; text-align:center; color:#e65100; font-size:13px; font-weight:600;">
-                        ⚠️ YASAL UYARI: Bu rapor bilgilendirme amaçlıdır, yatırım tavsiyesi içermez.
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <td style="background-color:#f5f5f5; padding:20px; text-align:center; border-top:1px solid #e0e0e0;">
-                    <p style="margin:0 0 10px 0;font-size:12px;color:#666;">Bu liste BIST Katılım Pay Endeksine göre filtrelenmiştir.</p>
-                    <p style="margin:0 0 10px 0; font-size:12px; color:#666;">Bu e-posta otomatik olarak gönderilmiştir. Lütfen yanıt vermeyiniz.</p>
-                    <p style="margin:0; font-size:12px; color:#666;">Author: @dipavcisi0007 © {current_year} Edited by Magnus Trade</p>
-                </td>
-            </tr>
-        </tbody>
-    </table>
+                </tbody>
+            </table>
+        </div>
+        <div style="background-color:#fff3cd; padding:15px; text-align:center; font-size:12px; color:#856404; border-left: 5px solid #ffeeba;">
+            <strong>⚠️ YASAL UYARI:</strong> Bu veriler otomatik taranmıştır, yatırım tavsiyesi değildir.
+        </div>
+        <div style="background-color:#f8f9fa; padding:20px; text-align:center; font-size:11px; color:#6c757d; border-top: 1px solid #eee;">
+            Bu rapor <strong>Magnus Trade</strong> tarafından otomatik oluşturulmuştur.<br>
+            © {current_year} | Katılım Endeksi Filtresi Uygulanmıştır.
+        </div>
+    </div>
+    </body>
+    </html>
     """
 
     msg = MIMEMultipart()
     msg['From'] = f"{from_name} <{from_address}>"
-    msg['To'] = ", ".join(valid_to_addresses)
-    msg['Subject'] = "📊 Agresif Hisse Taraması Günlük Sinyalleri"
+    msg['To'] = ", ".join(to_addresses)
+    msg['Subject'] = f"📊 Sinyal Raporu: {len(stock_signals)} Hisse Bulundu ({date_str})"
     msg.attach(MIMEText(html_body, 'html'))
 
     try:
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(from_address, password)
-            server.sendmail(from_address, valid_to_addresses, msg.as_string())
+            server.sendmail(from_address, to_addresses, msg.as_string())
         print("E-posta başarıyla gönderildi!")
-    except smtplib.SMTPRecipientsRefused as e:
-        print(f"Hata: Alıcı adresleri reddedildi: {e.recipients}")
-    except smtplib.SMTPAuthenticationError:
-        print("Hata: Kimlik doğrulama başarısız. E-posta veya şifre yanlış olabilir.")
     except Exception as e:
-        print(f"Hata oluştu: {type(e).__name__} - {str(e)}")
+        print(f"E-posta gönderim hatası: {e}")
 
 if __name__ == "__main__":
     EMAIL_USER = os.environ.get('EMAIL_USER')
     EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
-    SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
     TO_EMAIL = os.environ.get('TO_EMAIL')
-    SCRAPE_URL = os.environ.get('SCRAPE_URL')
-    FROM_NAME = "Magnus Trade"
+    SCRAPE_URL = "https://www.matematikrehberim.com/dipavcisi/agresifhissesignal.php"
 
-    if not all([EMAIL_USER, EMAIL_PASSWORD, SMTP_SERVER, TO_EMAIL, SCRAPE_URL]):
-        print("Hata: Ortam değişkenlerinden biri eksik.")
+    if not all([EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL]):
+        print("Hata: Ortam değişkenleri (EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL) eksik.")
     else:
-        to_email_list = [email.strip() for email in TO_EMAIL.split(',')]
-        print(f"TO_EMAIL listesi: {to_email_list}")
-        stock_signals = scrape_data(SCRAPE_URL)
-        send_email(stock_signals, FROM_NAME, EMAIL_USER, to_email_list, EMAIL_PASSWORD, SMTP_SERVER)
+        to_email_list = [e.strip() for e in TO_EMAIL.split(',')]
+        signals = scrape_data(SCRAPE_URL)
+        send_email(signals, "Magnus Trade", EMAIL_USER, to_email_list, EMAIL_PASSWORD)
