@@ -35,7 +35,7 @@ def load_stock_list(url="https://raw.githubusercontent.com/therkut/bistLists/ref
         print(f"Uyarı: Hisse listesi yüklenirken hata oluştu: {e}")
         return []
 
-def scrape_data(url):
+def scrape_data(url, is_cmi_mode=False):
     """Web sitesinden sağlanan HTML tablo yapısına göre verileri çeker."""
     if not url:
         return []
@@ -80,11 +80,25 @@ def scrape_data(url):
         cols = row.find_all('td')
         if len(cols) < 5: continue 
         
-        stock = cols[0].get_text(strip=True)
-        support_price = cols[1].get_text(strip=True)
-        signal_price = cols[2].get_text(strip=True)
-        cmi_val = cols[3].get_text(strip=True)
-        date_str = cols[4].get_text(strip=True)
+        # Hisse adını al ve "BIST:" ekini temizle
+        stock_raw = cols[0].get_text(strip=True)
+        stock = stock_raw.replace("BIST:", "").strip()
+
+        # Moduna göre sütun eşleşmesi
+        if is_cmi_mode:
+            # CMI yapısı: 0:Hisse, 1:Signal Fiyatı, 2:Cmi, 3:Cmf, 4:Tarih
+            support_price = "-" # CMI tablosunda destek yok
+            signal_price = cols[1].get_text(strip=True)
+            cmi_val = cols[2].get_text(strip=True)
+            cmf_val = cols[3].get_text(strip=True)
+            date_str = cols[4].get_text(strip=True)
+        else:
+            # Agresif yapısı: 0:Hisse, 1:Destek, 2:Signal, 3:Cmi, 4:Tarih
+            support_price = cols[1].get_text(strip=True)
+            signal_price = cols[2].get_text(strip=True)
+            cmi_val = cols[3].get_text(strip=True)
+            cmf_val = "-" # Agresif tablosunda cmf yok
+            date_str = cols[4].get_text(strip=True)
 
         try:
             date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
@@ -95,6 +109,7 @@ def scrape_data(url):
                         "support_price": support_price,
                         "signal_price": signal_price,
                         "cmi": cmi_val,
+                        "cmf": cmf_val,
                         "date": date_str
                     })
         except ValueError:
@@ -102,7 +117,7 @@ def scrape_data(url):
 
     return stock_signals
 
-def send_email(stock_signals, from_name, from_address, to_addresses, password, subject, report_title, smtp_server="smtp.gmail.com", smtp_port=465):
+def send_email(stock_signals, from_name, from_address, to_addresses, password, subject, report_title, is_cmi_mode=False, smtp_server="smtp.gmail.com", smtp_port=465):
     """Verilen sinyalleri e-posta olarak gönderir."""
     if not stock_signals:
         print(f"{report_title} için kriterlere uygun sinyal bulunmadığından e-posta gönderilmedi.")
@@ -111,6 +126,19 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
     now = datetime.now()
     date_str = now.strftime("%d.%m.%Y")
     current_year = now.strftime("%Y")
+
+    # Tablo başlıklarını moda göre belirleyelim
+    header_html = """
+        <th style="padding:12px; text-align:left; color: #495057;">Hisse</th>
+        <th style="padding:12px; text-align:center; color: #495057;">Sinyal</th>
+        <th style="padding:12px; text-align:center; color: #495057;">Cmi</th>
+    """
+    if is_cmi_mode:
+        header_html += '<th style="padding:12px; text-align:center; color: #495057;">Cmf</th>'
+    else:
+        header_html += '<th style="padding:12px; text-align:center; color: #495057;">Destek</th>'
+    
+    header_html += '<th style="padding:12px; text-align:right; color: #495057;">Tarih</th>'
 
     html_body = f"""
     <html>
@@ -124,11 +152,7 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
             <table width="100%" style="border-collapse:collapse; margin-top: 10px;">
                 <thead>
                     <tr style="background-color:#f8f9fa; border-bottom: 2px solid #dee2e6;">
-                        <th style="padding:12px; text-align:left; color: #495057;">Hisse</th>
-                        <th style="padding:12px; text-align:center; color: #495057;">Destek</th>
-                        <th style="padding:12px; text-align:center; color: #495057;">Sinyal</th>
-                        <th style="padding:12px; text-align:center; color: #495057;">Cmi</th>
-                        <th style="padding:12px; text-align:right; color: #495057;">Tarih</th>
+                        {header_html}
                     </tr>
                 </thead>
                 <tbody>
@@ -136,15 +160,22 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
 
     for i, signal in enumerate(stock_signals):
         bg_color = "#ffffff" if i % 2 == 0 else "#fcfcfc"
-        html_body += f"""
-            <tr style="background-color: {bg_color}; border-bottom: 1px solid #eee;">
-                <td style="padding:12px; font-weight: bold; color: #2c3e50;">{signal['stock']}</td>
-                <td style="padding:12px; text-align:center;">{signal['support_price']}</td>
-                <td style="padding:12px; text-align:center; color: #27ae60; font-weight: 500;">{signal['signal_price']}</td>
-                <td style="padding:12px; text-align:center; color: #7f8c8d;">{signal['cmi']}</td>
-                <td style="padding:12px; text-align:right; font-size:11px; color: #95a5a6;">{signal['date']}</td>
-            </tr>
+        
+        # Satır içeriği
+        row_content = f"""
+            <td style="padding:12px; font-weight: bold; color: #2c3e50;">{signal['stock']}</td>
+            <td style="padding:12px; text-align:center; color: #27ae60; font-weight: 500;">{signal['signal_price']}</td>
+            <td style="padding:12px; text-align:center; color: #7f8c8d;">{signal['cmi']}</td>
         """
+        
+        if is_cmi_mode:
+            row_content += f'<td style="padding:12px; text-align:center; color: #2980b9;">{signal["cmf"]}</td>'
+        else:
+            row_content += f'<td style="padding:12px; text-align:center;">{signal["support_price"]}</td>'
+            
+        row_content += f'<td style="padding:12px; text-align:right; font-size:11px; color: #95a5a6;">{signal["date"]}</td>'
+
+        html_body += f'<tr style="background-color: {bg_color}; border-bottom: 1px solid #eee;">{row_content}</tr>'
 
     html_body += f"""
                 </tbody>
@@ -177,35 +208,27 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
         print(f"{report_title} e-posta gönderim hatası: {e}")
 
 if __name__ == "__main__":
-    # Kritik degiskenleri aliyoruz
     email_user = os.environ.get('EMAIL_USER')
     email_pass = os.environ.get('EMAIL_PASSWORD')
     to_email = os.environ.get('TO_EMAIL')
-    
-    # URL'leri aliyoruz
     url_agresif = os.environ.get('SCRAPE_URL')
     url_cmi = os.environ.get('SCRAPE_CMI_URL')
 
-    # Temel kimlik dogrulama kontrolü
     if not all([email_user, email_pass, to_email]):
-        print("Hata: EMAIL_USER, EMAIL_PASSWORD veya TO_EMAIL ortam degiskenleri eksik.")
+        print("Hata: Temel kimlik bilgileri (EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL) eksik.")
     else:
         to_email_list = [e.strip() for e in to_email.split(',')]
         
-        # Agresif Sinyal Islemi
+        # 1. Agresif Hisse Taraması
         if url_agresif:
             print("Agresif sinyaller taranıyor...")
-            res_agresif = scrape_data(url_agresif)
+            res_agresif = scrape_data(url_agresif, is_cmi_mode=False)
             send_email(res_agresif, "therkut", email_user, to_email_list, email_pass, 
-                       "📊 Agresif Hisse Sinyal Raporu", "Agresif Hisse Sinyalleri")
-        else:
-            print("Uyarı: SCRAPE_URL tanımlanmadığı için Agresif tarama atlandı.")
+                       "📊 Agresif Hisse Sinyal Raporu", "Agresif Hisse Sinyalleri", is_cmi_mode=False)
 
-        # CMI Sinyal Islemi
+        # 2. CMI Hisse Taraması
         if url_cmi:
             print("CMI sinyalleri taranıyor...")
-            res_cmi = scrape_data(url_cmi)
+            res_cmi = scrape_data(url_cmi, is_cmi_mode=True)
             send_email(res_cmi, "therkut", email_user, to_email_list, email_pass, 
-                       "📊 CMI Hisse Sinyal Raporu", "CMI Hisse Sinyalleri")
-        else:
-            print("Uyarı: SCRAPE_CMI_URL tanımlanmadığı için CMI tarama atlandı.")
+                       "📊 CMI/CMF Hisse Sinyal Raporu", "CMI/CMF Hisse Sinyalleri", is_cmi_mode=True)
