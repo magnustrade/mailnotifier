@@ -1,7 +1,7 @@
 # author: @dipavcisi0007
 # source: https://x.com/dipAVCISI007/status/1894070221469577311
-# edited by: @therkut & Gemini
-# BIST Pay Endeksleri - Katılım Filtreli Agresif Sinyal Taraması
+# edited by: therkut 
+# BIST Pay Endeksleri - Katılım Filtreli Agresif ve CMI Sinyal Taraması
 
 import os
 import smtplib
@@ -45,14 +45,13 @@ def scrape_data(url):
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
     except Exception as e:
-        print(f"Hata: Web sitesine bağlanılamadı: {e}")
+        print(f"Hata: {url} adresine bağlanılamadı: {e}")
         return []
 
     soup = BeautifulSoup(response.content, 'html.parser')
-    # tbody içindeki satırları hedefliyoruz
     table = soup.find('table')
     if not table:
-        print("Hata: Sayfada tablo bulunamadı.")
+        print(f"Hata: {url} sayfasında tablo bulunamadı.")
         return []
 
     rows = table.find('tbody').find_all('tr') if table.find('tbody') else table.find_all('tr')[1:]
@@ -76,7 +75,6 @@ def scrape_data(url):
 
     for row in rows:
         cols = row.find_all('td')
-        # Beklenen yapı: 0:Hisse, 1:Destek, 2:Signal, 3:Cmi, 4:Tarih
         if len(cols) < 5: continue 
         
         stock = cols[0].get_text(strip=True)
@@ -86,7 +84,6 @@ def scrape_data(url):
         date_str = cols[4].get_text(strip=True)
 
         try:
-            # Örnek format: 2026-02-13 18:26:00
             date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
             if date_obj >= three_business_days_ago:
                 if not STOCK_LIST or stock in STOCK_LIST:
@@ -100,12 +97,12 @@ def scrape_data(url):
         except ValueError:
             continue
 
-    print(f"Tarama tamamlandı: {len(stock_signals)} sinyal filtrelendi.")
     return stock_signals
 
-def send_email(stock_signals, from_name, from_address, to_addresses, password, smtp_server="smtp.gmail.com", smtp_port=465):
+def send_email(stock_signals, from_name, from_address, to_addresses, password, subject, report_title, smtp_server="smtp.gmail.com", smtp_port=465):
+    """Verilen sinyalleri e-posta olarak gönderir."""
     if not stock_signals:
-        print("Gönderilecek sinyal bulunamadı.")
+        print(f"{report_title} için gönderilecek sinyal bulunamadı.")
         return
 
     now = datetime.now()
@@ -117,7 +114,7 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
     <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; padding: 20px;">
     <div style="max-width:650px; margin:0 auto; background-color: #ffffff; border-radius:12px; overflow:hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
         <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color:white; padding:30px; text-align:center;">
-            <h2 style="margin:0; font-size: 24px;">📊 Agresif Hisse Sinyalleri</h2>
+            <h2 style="margin:0; font-size: 24px;">📊 {report_title}</h2>
             <p style="margin:10px 0 0 0; opacity: 0.8;">{date_str} Günlük Tarama Raporu</p>
         </div>
         <div style="padding:20px;">
@@ -154,7 +151,7 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
             <strong>⚠️ YASAL UYARI:</strong> Bu veriler otomatik taranmıştır, yatırım tavsiyesi değildir.
         </div>
         <div style="background-color:#f8f9fa; padding:20px; text-align:center; font-size:11px; color:#6c757d; border-top: 1px solid #eee;">
-            Bu rapor <strong>Magnus Trade</strong> tarafından otomatik oluşturulmuştur.<br>
+            Bu rapor <strong>therkut</strong> tarafından otomatik oluşturulmuştur.<br>
             © {current_year} | Katılım Endeksi Filtresi Uygulanmıştır.
         </div>
     </div>
@@ -165,26 +162,54 @@ def send_email(stock_signals, from_name, from_address, to_addresses, password, s
     msg = MIMEMultipart()
     msg['From'] = f"{from_name} <{from_address}>"
     msg['To'] = ", ".join(to_addresses)
-    msg['Subject'] = f"📊 Sinyal Raporu: {len(stock_signals)} Hisse Bulundu ({date_str})"
+    msg['Subject'] = f"{subject} ({date_str})"
     msg.attach(MIMEText(html_body, 'html'))
 
     try:
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(from_address, password)
             server.sendmail(from_address, to_addresses, msg.as_string())
-        print("E-posta başarıyla gönderildi!")
+        print(f"{report_title} e-postası başarıyla gönderildi!")
     except Exception as e:
-        print(f"E-posta gönderim hatası: {e}")
+        print(f"{report_title} e-posta gönderim hatası: {e}")
 
 if __name__ == "__main__":
+    # Ortam Değişkenleri
     EMAIL_USER = os.environ.get('EMAIL_USER')
     EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
     TO_EMAIL = os.environ.get('TO_EMAIL')
-    SCRAPE_URL = "https://www.matematikrehberim.com/dipavcisi/agresifhissesignal.php"
+    
+    # URL Tanımlamaları
+    SCRAPE_AGRESIF_URL = os.environ.get('SCRAPE_URL')
+    SCRAPE_CMI_URL = os.environ.get('SCRAPE_CMI_URL')
 
-    if not all([EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL]):
-        print("Hata: Ortam değişkenleri (EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL) eksik.")
+    if not all([EMAIL_USER, EMAIL_PASSWORD, TO_EMAIL, SCRAPE_AGRESIF_URL, SCRAPE_CMI_URL]):
+        print("Hata: Ortam değişkenleri (Email bilgileri veya URL'ler) eksik.")
     else:
         to_email_list = [e.strip() for e in TO_EMAIL.split(',')]
-        signals = scrape_data(SCRAPE_URL)
-        send_email(signals, "Magnus Trade", EMAIL_USER, to_email_list, EMAIL_PASSWORD)
+        
+        # 1. Agresif Hisse Taraması
+        print("Agresif sinyaller taranıyor...")
+        agresif_signals = scrape_data(SCRAPE_AGRESIF_URL)
+        send_email(
+            stock_signals=agresif_signals, 
+            from_name="therkut", 
+            from_address=EMAIL_USER, 
+            to_addresses=to_email_list, 
+            password=EMAIL_PASSWORD,
+            subject="📊 Agresif Hisse Sinyal Raporu",
+            report_title="Agresif Hisse Sinyalleri"
+        )
+        
+        # 2. CMI Hisse Taraması
+        print("CMI sinyalleri taranıyor...")
+        cmi_signals = scrape_data(SCRAPE_CMI_URL)
+        send_email(
+            stock_signals=cmi_signals, 
+            from_name="therkut", 
+            from_address=EMAIL_USER, 
+            to_addresses=to_email_list, 
+            password=EMAIL_PASSWORD,
+            subject="📊 CMI Hisse Sinyal Raporu",
+            report_title="CMI Hisse Sinyalleri"
+        )
