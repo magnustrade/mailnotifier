@@ -1,0 +1,36 @@
+name: Scrape and Send Email
+
+on:
+  schedule:
+    - cron: '45 15 * * *' # Türkiye saatiyle 18:45 (UTC 15:45)
+  workflow_dispatch: # Manuel tetikleme için
+
+jobs:
+  scrape_and_mail:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Node.js 20 destekli güncel versiyon
+
+      - name: Set up Python
+        uses: actions/setup-python@v5 # Güncel versiyon
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Bağımlılıkları önbelleğe alarak kurulumu hızlandırır
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scrape and mail script
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          SCRAPE_URL: ${{ secrets.SCRAPE_URL }}
+          SCRAPE_CMI_URL: ${{ secrets.SCRAPE_CMI_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python main.py
