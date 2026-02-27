@@ -132,8 +132,12 @@ class SignalScanner:
             days_back += 1
         return (ref_date - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-def analyze_signals(signals):
-    """Gemini API üzerinden doğrudan sonuç odaklı ve net bir analiz üretir."""
+def analyze_signals(signals, is_cmi_report=False):
+    """Gemini API üzerinden doğrudan sonuç odaklı ve net bir analiz üretir.
+
+    Eğer `is_cmi_report` True ise hem CMI hem CMF bilgisi kullanılır,
+    değilse yalnızca CMI alanı bağlam oluşturmak için kullanılır.
+    """
     if not signals or not genai: return None
 
     api_key = os.environ.get('GEMINI_API_KEY')
@@ -143,7 +147,10 @@ def analyze_signals(signals):
     recent = [s for s in signals if s['dt_obj'] >= datetime.now() - timedelta(days=2)]
     if not recent: return None
 
-    context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s['cmi']}, CMF {s['cmf']}" for s in recent[:15]])
+    if is_cmi_report:
+        context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s['cmi']}, CMF {s['cmf']}" for s in recent[:15]])
+    else:
+        context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s['cmi']}" for s in recent[:15]])
 
     prompt = (
         f"{Config.SYSTEM_PROMPT}\n\nVeriler:\n{context}\n\n"
@@ -168,7 +175,7 @@ def send_professional_email(signals, title, is_cmi):
 
     if not all([user, password, to_emails, signals]): return
 
-    analysis = analyze_signals(signals)
+    analysis = analyze_signals(signals, is_cmi)
     report_date = datetime.now().strftime("%d.%m.%Y")
 
     col_extra_name = "Cmf" if is_cmi else "Destek"
