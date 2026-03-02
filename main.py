@@ -119,6 +119,7 @@ class SignalScanner:
             # Tarihe göre yeniden eskiye sırala
             sorted_signals = sorted(unique_signals.values(), key=lambda x: x['dt_obj'], reverse=True)
 
+            logger.info(f"Tarama tamamlandı (CMI modu: {is_cmi_mode}). Bulunan sinyal sayısı: {len(sorted_signals)}")
             return sorted_signals
         except Exception as e:
             logger.error(f"Kazıma hatası ({url}): {e}")
@@ -132,7 +133,7 @@ class SignalScanner:
             days_back += 1
         return (ref_date - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-def analyze_signals(signals, is_cmi_report=False):
+def analyze_signals(signals, is_cmi_report=True):
     """Gemini API üzerinden doğrudan sonuç odaklı ve net bir analiz üretir.
 
     Eğer `is_cmi_report` True ise hem CMI hem CMF bilgisi kullanılır,
@@ -173,7 +174,14 @@ def send_professional_email(signals, title, is_cmi):
     password = os.environ.get('EMAIL_PASSWORD')
     to_emails = os.environ.get('TO_EMAIL')
 
-    if not all([user, password, to_emails, signals]): return
+    missing = []
+    if not user: missing.append('EMAIL_USER')
+    if not password: missing.append('EMAIL_PASSWORD')
+    if not to_emails: missing.append('TO_EMAIL')
+    if not signals: missing.append('signals')
+    if missing:
+        logger.warning(f"E-posta gönderimi atlandı ({title}). Eksik/boş: {', '.join(missing)}")
+        return
 
     analysis = analyze_signals(signals, is_cmi)
     report_date = datetime.now().strftime("%d.%m.%Y")
