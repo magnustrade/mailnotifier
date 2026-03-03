@@ -139,34 +139,41 @@ def analyze_signals(signals, is_cmi_report=True):
     Eğer `is_cmi_report` True ise hem CMI hem CMF bilgisi kullanılır,
     değilse yalnızca CMI alanı bağlam oluşturmak için kullanılır.
     """
-    if not signals or not genai: return None
+    # Öncelikle Gemini kullanılmaya çalışılır; yoksa yerel kısa bir özet döndürülür.
+    if genai:
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if api_key:
+            # Sadece en güncel (son 48 saat) verilere odaklan
+            recent = [s for s in signals if s.get('dt_obj') and s['dt_obj'] >= datetime.now() - timedelta(days=2)]
+            if recent:
+                if is_cmi_report:
+                    context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s.get('cmi','-')}, CMF {s.get('cmf','-')}" for s in recent[:15]])
+                else:
+                    context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s.get('cmi','-')}" for s in recent[:15]])
 
-    api_key = os.environ.get('GEMINI_API_KEY')
-    if not api_key: return None
+                prompt = (
+                    f"{Config.SYSTEM_PROMPT}\n\nVeriler:\n{context}\n\n"
+                    "TALİMAT: Aşağıdaki verileri kullanarak doğrudan sonuca yönelik, net ve aksiyon odaklı bir özet yaz. "
+                    "Giriş cümleleri kurma. En güçlü nakit girişi olanları vurgula ve durumu net özetle. "
+                    "En fazla 3 cümle. Markdown (yıldız, kare vb.) kullanma. Türkçe."
+                )
 
-    # Sadece en güncel (son 48 saat) verilere odaklan
-    recent = [s for s in signals if s['dt_obj'] >= datetime.now() - timedelta(days=2)]
-    if not recent: return None
+                try:
+                    client = genai.Client(api_key=api_key)
+                    response = client.models.generate_content(model=Config.MODEL_ID, contents=prompt)
+                    return clean_markdown(response.text)
+                except Exception as e:
+                    logger.error(f"Gemini hatası: {e}")
 
-    if is_cmi_report:
-        context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s['cmi']}, CMF {s['cmf']}" for s in recent[:15]])
-    else:
-        context = "\n".join([f"{s['stock']}: Sinyal {s['signal']}, CMI {s['cmi']}" for s in recent[:15]])
+    # Gemini yoksa veya hata olduysa, yerel yedek özet oluştur
+    if signals:
+        recent_local = [s for s in signals if s.get('dt_obj') and s['dt_obj'] >= datetime.now() - timedelta(days=2)]
+        if not recent_local:
+            return "Gemini yorumuna ulaşılamadı; son 48 saatte geçerli sinyal yok."
+        names = ', '.join([s['stock'] for s in recent_local[:5]])
+        return f"Gemini API erişilemedi; yerel özet — {len(recent_local)} sinyal bulundu. Öne çıkanlar: {names}."
 
-    prompt = (
-        f"{Config.SYSTEM_PROMPT}\n\nVeriler:\n{context}\n\n"
-        "TALİMAT: Aşağıdaki verileri kullanarak doğrudan sonuca yönelik, net ve aksiyon odaklı bir özet yaz. "
-        "Giriş cümleleri kurma. En güçlü nakit girişi olanları vurgula ve durumu net özetle. "
-        "En fazla 3 cümle. Markdown (yıldız, kare vb.) kullanma. Türkçe."
-    )
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=Config.MODEL_ID, contents=prompt)
-        return clean_markdown(response.text)
-    except Exception as e:
-        logger.error(f"Gemini hatası: {e}")
-        return None
+    return "Gemini yorumuna ulaşılamadı."
 
 def send_professional_email(signals, title, is_cmi):
     """Yüksek uyumluluklu HTML e-posta gönderir."""
@@ -178,7 +185,6 @@ def send_professional_email(signals, title, is_cmi):
     if not user: missing.append('EMAIL_USER')
     if not password: missing.append('EMAIL_PASSWORD')
     if not to_emails: missing.append('TO_EMAIL')
-    if not signals: missing.append('signals')
     if missing:
         logger.warning(f"E-posta gönderimi atlandı ({title}). Eksik/boş: {', '.join(missing)}")
         return
@@ -190,15 +196,21 @@ def send_professional_email(signals, title, is_cmi):
     col_extra_key = "cmf" if is_cmi else "support"
 
     rows_html = ""
-    for i, s in enumerate(signals):
-        bg = "#ffffff" if i % 2 == 0 else "#f8f9fa"
-        rows_html += f"""
-        <tr style="background-color: {bg}; border-bottom: 1px solid #edf2f7;">
-            <td style="padding: 12px 8px; font-weight: bold; color: #1a202c;">{s['stock']}</td>
-            <td style="padding: 12px 8px; text-align: center; color: #38a169; font-weight: 700;">{s['signal']}</td>
-            <td style="padding: 12px 8px; text-align: center; color: #4a5568;">{s['cmi']}</td>
-            <td style="padding: 12px 8px; text-align: center; color: #2d3748;">{s[col_extra_key]}</td>
-            <td style="padding: 12px 8px; text-align: right; color: #718096; font-size: 11px;">{s['display_date']}</td>
+    if signals:
+        for i, s in enumerate(signals):
+            bg = "#ffffff" if i % 2 == 0 else "#f8f9fa"
+            rows_html += f"""
+            <tr style="background-color: {bg}; border-bottom: 1px solid #edf2f7;">
+                <td style="padding: 12px 8px; font-weight: bold; color: #1a202c;">{s['stock']}</td>
+                <td style="padding: 12px 8px; text-align: center; color: #38a169; font-weight: 700;">{s['signal']}</td>
+                <td style="padding: 12px 8px; text-align: center; color: #4a5568;">{s.get('cmi','-')}</td>
+                <td style="padding: 12px 8px; text-align: center; color: #2d3748;">{s.get(col_extra_key,'-')}</td>
+                <td style="padding: 12px 8px; text-align: right; color: #718096; font-size: 11px;">{s.get('display_date','-')}</td>
+            </tr>"""
+    else:
+        rows_html = """
+        <tr style="background-color: #ffffff;">
+            <td colspan="5" style="padding: 12px 8px; text-align: center; color: #718096;">Bu taramada geçerli sinyal bulunamadı.</td>
         </tr>"""
 
     html = f"""
@@ -231,7 +243,10 @@ def send_professional_email(signals, title, is_cmi):
     </html>"""
 
     msg = MIMEMultipart()
-    msg['Subject'] = f"{title} - {report_date}"
+    # Konu (subject) gövdedeki başlıktan farklı olacak şekilde finans odaklı emoji ile öne alınır
+    emoji = "💰" if is_cmi else "📈"
+    subject_text = f"{emoji} {title}"
+    msg['Subject'] = subject_text
     msg['From'] = f"Magnus Trade <{user}>"
     msg['To'] = to_emails
     msg.attach(MIMEText(html, 'html'))
